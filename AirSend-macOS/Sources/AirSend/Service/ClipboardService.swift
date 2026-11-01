@@ -10,6 +10,9 @@ class ClipboardService {
     private var deliveryGate = RecentDeliveryGate(duplicateWindow: 2, capacity: 32)
     private(set) var listensForText = false
     private(set) var listensForImages = false
+    /// When true, skip both send (pasteboard poll) and receive (setContent) paths.
+    /// Used to yield clipboard ownership to a competitor such as O+互联.
+    var isPausedForCompetitor = false
     var onNewContent: ((String) -> Void)?
     var onNewImage: ((Data) -> Void)?
     
@@ -44,6 +47,12 @@ class ClipboardService {
     
     private func checkPasteboard() {
         let changeCount = pasteboard.changeCount
+        // While yielding to a competitor, track changeCount but never deliver.
+        // This avoids a burst of stale "new clipboard" events on resume.
+        if isPausedForCompetitor {
+            lastChangeCount = changeCount
+            return
+        }
         guard changeCount != lastChangeCount else { return }
         lastChangeCount = changeCount
 
@@ -73,6 +82,7 @@ class ClipboardService {
     
     // Helper to set clipboard content (when receiving)
     func setContent(_ content: String) {
+        guard !isPausedForCompetitor else { return }
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         pasteboard.clearContents()
         pasteboard.setString(content, forType: .string)

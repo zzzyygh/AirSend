@@ -577,6 +577,21 @@ struct AirSendSettingsView: View {
             )
 
             SettingsToggleRow(
+                title: "Yield to O+ Connect",
+                detail: snapshot.oPlusYieldActive
+                    ? "O+互联 is running — clipboard sync is paused."
+                    : "Pause clipboard sync while O+互联 is running.",
+                isOn: Binding(
+                    get: { snapshot.oPlusYieldEnabled },
+                    set: { store.actions.setOPlusYieldEnabled($0) }
+                )
+            )
+            .settingsPageEntrance(
+                trigger: "\(trigger)|row=status-oplus-yield",
+                order: startOrder + diagnosticCount + 1
+            )
+
+            SettingsToggleRow(
                 title: "Screenshot Sync",
                 detail: "Send new macOS screenshots to one trusted target.",
                 isOn: Binding(
@@ -586,7 +601,7 @@ struct AirSendSettingsView: View {
             )
             .settingsPageEntrance(
                 trigger: "\(trigger)|row=status-screenshot",
-                order: startOrder + diagnosticCount + 1
+                order: startOrder + diagnosticCount + 2
             )
 
         case .statusQuickActions:
@@ -883,6 +898,21 @@ struct AirSendSettingsView: View {
             )
 
             SettingsToggleRow(
+                title: "Yield to O+ Connect",
+                detail: snapshot.oPlusYieldActive
+                    ? "O+互联 is running — clipboard sync is paused."
+                    : "Pause clipboard sync while O+互联 is running.",
+                isOn: Binding(
+                    get: { snapshot.oPlusYieldEnabled },
+                    set: { store.actions.setOPlusYieldEnabled($0) }
+                )
+            )
+            .settingsPageEntrance(
+                trigger: "\(trigger)|row=automation-oplus-yield",
+                order: startOrder + 2
+            )
+
+            SettingsToggleRow(
                 title: "Screenshot Sync",
                 detail: "Watch new screenshots and send them to one trusted target.",
                 isOn: Binding(
@@ -892,7 +922,7 @@ struct AirSendSettingsView: View {
             )
             .settingsPageEntrance(
                 trigger: "\(trigger)|row=automation-screenshot",
-                order: startOrder + 2
+                order: startOrder + 3
             )
 
             SettingsValueRow(
@@ -902,7 +932,7 @@ struct AirSendSettingsView: View {
             )
             .settingsPageEntrance(
                 trigger: "\(trigger)|row=automation-watcher",
-                order: startOrder + 3
+                order: startOrder + 4
             )
 
         case .settingsReceiving:

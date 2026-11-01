@@ -94,6 +94,8 @@ struct AirSendDiagnosticSummary: Identifiable, Hashable {
 
 struct AirSendSettingsSnapshot: Equatable {
     var clipboardSyncEnabled: Bool
+    var oPlusYieldEnabled: Bool
+    var oPlusYieldActive: Bool
     var screenshotSyncEnabled: Bool
     var autoUpdateEnabled: Bool
     var launchAtLoginEnabled: Bool
@@ -135,6 +137,7 @@ struct AirSendSettingsSnapshot: Equatable {
 final class AirSendSettingsStore: ObservableObject {
     struct Actions {
         let setClipboardSyncEnabled: (Bool) -> Void
+        let setOPlusYieldEnabled: (Bool) -> Void
         let setScreenshotSyncEnabled: (Bool) -> Void
         let setAutoUpdateEnabled: (Bool) -> Void
         let setLaunchAtLoginEnabled: (Bool) -> Void

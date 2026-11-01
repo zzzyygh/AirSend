@@ -67,6 +67,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, DropTargetViewDelegate, NSMe
     )
     lazy var clipboardSender = ClipboardSender(fileSender: fileSender)
     let clipboardService = ClipboardService()
+    let oplusYieldController = OPlusConnectYieldController()
     let screenshotWatcher = ScreenshotWatcher()
     
     // UI Components
@@ -143,6 +144,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, DropTargetViewDelegate, NSMe
                 persistRuntimeConfiguration()
             }
             updateMenu()
+        }
+    }
+
+    /// Pause clipboard sync while O+互联 is running (default on).
+    private var isOPlusYieldEnabled: Bool {
+        get { oplusYieldController.isEnabled }
+        set {
+            oplusYieldController.isEnabled = newValue
+            updateMenu()
+            refreshSettingsWindowIfNeeded()
         }
     }
 
@@ -622,10 +633,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, DropTargetViewDelegate, NSMe
             AirSendDiagnosticSummary(
                 id: "automation",
                 title: "Automation",
-                value: automationRunning ? "Active" : "Idle",
-                detail: "Clipboard \(clipboardService.isRunning ? "on" : "off") · Screenshots \(screenshotStatus.0.lowercased())",
-                symbolName: "bolt.horizontal.circle",
-                tone: screenshotStatus.1
+                value: oplusYieldController.isYielding ? "Yielding" : (automationRunning ? "Active" : "Idle"),
+                detail: oplusYieldController.isYielding
+                    ? "Clipboard paused · O+互联 running"
+                    : "Clipboard \(clipboardService.isRunning ? "on" : "off") · Screenshots \(screenshotStatus.0.lowercased())",
+                symbolName: oplusYieldController.isYielding ? "hand.raised" : "bolt.horizontal.circle",
+                tone: oplusYieldController.isYielding ? .warning : screenshotStatus.1
             ),
             AirSendDiagnosticSummary(
                 id: "runtime",
@@ -742,6 +755,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, DropTargetViewDelegate, NSMe
 
         return AirSendSettingsSnapshot(
             clipboardSyncEnabled: isUnifiedClipboardSyncEnabled,
+            oPlusYieldEnabled: isOPlusYieldEnabled,
+            oPlusYieldActive: oplusYieldController.isYielding,
             screenshotSyncEnabled: isScreenshotFileSyncEnabled,
             autoUpdateEnabled: isAutoUpdateEnabled,
             launchAtLoginEnabled: isLaunchAtLoginEnabled,
@@ -798,6 +813,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, DropTargetViewDelegate, NSMe
             actions: .init(
                 setClipboardSyncEnabled: { [weak self] enabled in
                     self?.setUnifiedClipboardSyncEnabled(enabled, showInfoIfEnabling: true)
+                },
+                setOPlusYieldEnabled: { [weak self] enabled in
+                    self?.isOPlusYieldEnabled = enabled
                 },
                 setScreenshotSyncEnabled: { [weak self] enabled in
                     self?.setScreenshotFileSyncEnabled(enabled)
@@ -2272,6 +2290,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, DropTargetViewDelegate, NSMe
             self?.updateMenu()
         }
         UpdateService.shared.configureAutoUpdate(enabled: isAutoUpdateEnabled)
+
+        // Yield clipboard sync to O+互联 when it is running.
+        clipboardService.isPausedForCompetitor = oplusYieldController.isYielding
+        if oplusYieldController.isYielding {
+            logTransfer("🤝 O+互联 detected at launch — clipboard sync paused")
+        } else if !isOPlusYieldEnabled {
+            logTransfer("ℹ️ O+互联 yield disabled by user — clipboard sync active")
+        } else {
+            logTransfer("ℹ️ O+互联 not running — clipboard yield ready")
+        }
+        oplusYieldController.onChange = { [weak self] yielding in
+            guard let self else { return }
+            self.clipboardService.isPausedForCompetitor = yielding
+            logTransfer(
+                yielding
+                    ? "🤝 O+互联 running — clipboard sync paused (yield)"
+                    : "✅ O+互联 yield released — clipboard sync restored"
+            )
+            self.updateMenu()
+            self.refreshSettingsWindowIfNeeded()
+        }
         
         loadDevices()
         migrateSelectionAndHistoryToV2IfNeeded()
@@ -2726,9 +2765,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, DropTargetViewDelegate, NSMe
     }
 
     private func handleNewScreenshot(_ url: URL) {
+        logTransfer("📸 Screenshot watcher fired: \(url.lastPathComponent) · target=\(selectedDeviceGroupKey) · trustedCount=\(runtimeConfiguration.trustedPeerFingerprints.count)")
         guard selectedDeviceGroupKey != broadcastSelectionKey,
               let group = buildDeviceGroups().first(where: { $0.key == selectedDeviceGroupKey }),
               group.candidates.contains(where: { isTrustedFingerprint($0.id) }) else {
+            logTransfer("⚠️ Screenshot blocked: needs one trusted selected device (broadcast=\(selectedDeviceGroupKey == broadcastSelectionKey), trusted=\(runtimeConfiguration.trustedPeerFingerprints.count))")
             recordConsoleActivity(
                 title: "Screenshot not sent",
                 detail: "Choose one trusted device for automatic screenshots",
@@ -3402,6 +3443,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, DropTargetViewDelegate, NSMe
             keyEquivalent: "o"
         ))
         menu.addItem(NSMenuItem.separator())
+
+        // O+互联 yield: status + toggle
+        let oplusStatusTitle: String
+        if !isOPlusYieldEnabled {
+            oplusStatusTitle = AirSendLocalization.localized("Yield off · O+互联 ignored")
+        } else if oplusYieldController.isYielding {
+            oplusStatusTitle = AirSendLocalization.localized("Yielding to O+互联 · clipboard paused")
+        } else {
+            oplusStatusTitle = AirSendLocalization.localized("Yield ready · O+互联 not running")
+        }
+        let oplusStatusItem = NSMenuItem(title: oplusStatusTitle, action: nil, keyEquivalent: "")
+        oplusStatusItem.isEnabled = false
+        menu.addItem(oplusStatusItem)
+
+        let oplusToggleItem = NSMenuItem(
+            title: AirSendLocalization.localized("Yield to O+互联"),
+            action: #selector(toggleOPlusYield(_:)),
+            keyEquivalent: ""
+        )
+        oplusToggleItem.target = self
+        oplusToggleItem.state = isOPlusYieldEnabled ? .on : .off
+        menu.addItem(oplusToggleItem)
+        menu.addItem(NSMenuItem.separator())
         
         let groups = buildDeviceGroups()
         
@@ -3559,6 +3623,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, DropTargetViewDelegate, NSMe
         logTransfer("🧭 Discovery UI refresh deferred while menu is open (\(reason))")
     }
     
+    @objc func toggleOPlusYield(_ sender: NSMenuItem) {
+        isOPlusYieldEnabled.toggle()
+        logTransfer("⚙️ O+互联 yield toggled → \(isOPlusYieldEnabled ? "ON" : "OFF") · currently yielding=\(oplusYieldController.isYielding)")
+        // Menu rebuild happens via updateMenu in the setter.
+    }
+
     @objc func sendClipboard() {
         print("Send Clipboard clicked")
         if let str = NSPasteboard.general.string(forType: .string),
@@ -4296,7 +4366,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, DropTargetViewDelegate, NSMe
     // MARK: - NSMenuDelegate
     
     func menuWillOpen(_ menu: NSMenu) {
+        // Refresh yield state before showing so the status line is accurate.
+        oplusYieldController.refresh()
         isStatusMenuOpen = true
+        setupMenu()
         discoveryService.sendAnnouncement()
     }
     
